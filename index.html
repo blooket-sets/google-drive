@@ -50,7 +50,21 @@
   .thumb .letter{font-size:2.2rem;font-weight:600;color:var(--muted);opacity:.6}
   .thumb .ico{border-color:var(--muted)}
   .items.grid .name{padding:10px 12px;font-size:.92rem;line-height:1.3}
-  #viewer{position:fixed;inset:0;background:#fff;display:none}
+
+  .cell{position:relative}
+  .newtab{position:absolute;top:50%;right:10px;transform:translateY(-50%);width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--muted);cursor:pointer;padding:0}
+  .newtab:hover{color:var(--accent);border-color:var(--accent)}
+  .newtab svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .cell.has-tab .item{padding-right:56px}
+  .items.grid .cell{display:flex}
+  .items.grid .cell.has-tab .item{padding-right:0}
+  .items.grid .cell .item{height:100%}
+  .items.grid .cell .newtab{top:auto;bottom:6px;transform:none;right:8px}
+  .items.grid .cell .item .name{min-height:46px;display:flex;align-items:center}
+  .items.grid .cell.has-tab .item .name{padding-right:52px}
+  #scroller{position:fixed;inset:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
+  #scroller.locked{overflow:hidden}
+    #viewer{overscroll-behavior:contain;position:fixed;inset:0;background:#fff;display:none}
   #viewer.on{display:block}
   #frame{width:100%;height:100%;border:0;background:#fff}
   #close{position:fixed;top:10px;right:10px;width:40px;height:40px;border-radius:50%;border:1px solid rgba(0,0,0,.25);background:rgba(20,24,29,.85);color:#fff;font-size:22px;line-height:1;cursor:pointer;z-index:10;display:grid;place-items:center}
@@ -61,6 +75,7 @@
 </head>
 <body>
 
+<div id="scroller">
 <main id="list">
   <h1>Folder files</h1>
   <p class="sub" id="status">Not loaded yet</p>
@@ -85,6 +100,7 @@
   <div class="items" id="items"></div>
   <p class="note" id="note"></p>
 </main>
+</div>
 
 <div id="viewer">
   <button id="close" aria-label="Close and return to the list" title="Close (Esc)">&times;</button>
@@ -183,7 +199,18 @@
         b.append(name, meta);
       }
       b.addEventListener("click", function(){ folder ? enterFolder(f) : openFile(f); });
-      items.appendChild(b);
+      var cell = document.createElement("div"); cell.className = "cell";
+      cell.appendChild(b);
+      if(!folder){
+        cell.classList.add("has-tab");
+        var nt = document.createElement("button");
+        nt.className = "newtab"; nt.type = "button";
+        nt.title = "Open in a new tab"; nt.setAttribute("aria-label", "Open " + title + " in a new tab");
+        nt.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>';
+        nt.addEventListener("click", function(e){ e.stopPropagation(); openInTab(f); });
+        cell.appendChild(nt);
+      }
+      items.appendChild(cell);
     });
     var note = [];
     if(!shown) note.push(q ? "Nothing matches that filter." : "No HTML files here.");
@@ -242,10 +269,11 @@
       currentName = f.name;
       frame.srcdoc = html;
       $("viewer").classList.add("on");
+      $("scroller").classList.add("locked");
       $("close").focus();
     } catch(e){
       showError(e.message);
-      window.scrollTo(0,0);
+      $("scroller").scrollTop = 0;
     } finally {
       $("loading").classList.remove("on");
     }
@@ -253,6 +281,7 @@
 
   function closeViewer(){
     $("viewer").classList.remove("on");
+    $("scroller").classList.remove("locked");
     $("frame").removeAttribute("srcdoc");
     $("frame").src = "about:blank";
   }
@@ -265,10 +294,7 @@
     for(var i=0;i<els.length;i++){ var r = els[i].getBoundingClientRect(); if(r.width>0 && r.height>0) return false; }
     return t === "]]>";
   }
-  function fixFrame(){
-    var fr = $("frame"), d;
-    if(!$("viewer").classList.contains("on")) return;
-    try { d = fr.contentDocument; } catch(e){ return; }
+  function fixDoc(d){
     if(!d || !d.documentElement || !d.body) return;
     // Flash/Ruffle pages size their player as 100% of the page; give the page a height if it has none.
     var players = d.querySelectorAll("ruffle-object,ruffle-embed,object,embed"), collapsed = false;
@@ -279,6 +305,41 @@
       (d.head || d.documentElement).appendChild(st);
     }
   }
+  function fixFrame(){
+    var d;
+    if(!$("viewer").classList.contains("on")) return;
+    try { d = $("frame").contentDocument; } catch(e){ return; }
+    fixDoc(d);
+  }
+  async function openInTab(f){
+    // Open the tab right away (inside the click) so popup blockers allow it, then fill it in.
+    var w = window.open("about:blank", "_blank");
+    if(!w){ showError("The browser blocked the new tab. Allow pop-ups for this page and try again."); $("scroller").scrollTop = 0; return; }
+    try { w.document.title = f.name.replace(/\.html?$/i, ""); w.document.body.textContent = "Loading…"; } catch(e){}
+    try {
+      var r = await fetch(state.key + "/file?id=" + encodeURIComponent(f.id));
+      if(!r.ok) throw new Error("Worker returned " + r.status + " when opening " + f.name);
+      var html = await r.text();
+      // Keep the tab on about:blank and run the game inside a full-screen frame, which handles pages that rewrite themselves.
+      var wd = w.document;
+      wd.body.textContent = "";
+      wd.body.style.cssText = "margin:0;background:#000;overflow:hidden";
+      var fr = wd.createElement("iframe");
+      fr.style.cssText = "position:fixed;inset:0;width:100%;height:100%;border:0;background:#fff";
+      fr.setAttribute("allow", "fullscreen; autoplay; gamepad; clipboard-write");
+      fr.setAttribute("allowfullscreen", "");
+      wd.body.appendChild(fr);
+      fr.srcdoc = html;
+      fr.addEventListener("load", function(){
+        setTimeout(function(){ try { fixDoc(fr.contentDocument); } catch(e){} }, 600);
+        setTimeout(function(){ try { fixDoc(fr.contentDocument); } catch(e){} }, 2000);
+      });
+    } catch(e){
+      try { w.close(); } catch(x){}
+      showError(e.message);
+      $("scroller").scrollTop = 0;
+    }
+  }
   function checkFrame(){
     var d;
     if(!$("viewer").classList.contains("on")) return;
@@ -286,7 +347,7 @@
     if(d && d.body && pageIsBlank(d)){
       closeViewer();
       showError("There was an error with the file \"" + currentName + "\". It loaded as just \"]]>\", so it was closed.");
-      window.scrollTo(0,0);
+      $("scroller").scrollTop = 0;
     }
   }
   $("frame").addEventListener("load", function(){
