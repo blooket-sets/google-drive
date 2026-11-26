@@ -357,25 +357,6 @@
     render();
   }
 
-  // Each visit, quietly re-download saved pages so the local copies stay current.
-  async function refreshSaved(){
-    if(navigator.onLine === false || !state.key) return;
-    var list = state.saved.slice();
-    for(var i=0;i<list.length;i++){
-      var m = list[i];
-      try {
-        var r = await fetch(state.key + "/file?id=" + encodeURIComponent(m.id));
-        if(!r.ok) continue;
-        var t = await r.text();
-        if(!state.savedIds[m.id]) continue;
-        var old = await idb("html", "readonly", "get", m.id);
-        if(!t.trim() || (old && old.html && t.length < old.html.length * 0.5)) continue;
-        await idb("html", "readwrite", "put", {id:m.id, html:t});
-        await idb("meta", "readwrite", "put", {id:m.id, name:m.name, savedAt:Date.now(), size:t.length});
-      } catch(e){ if(e instanceof TypeError) break; }
-    }
-  }
-
   async function getGameHtml(f){
     if(state.savedIds[f.id]){
       try { var rec = await idb("html", "readonly", "get", f.id); if(rec && rec.html) return rec.html; } catch(e){}
@@ -546,7 +527,7 @@
   $("folder").value = lsGet("dv_folder") || DEFAULT_FOLDER;
   var saved = lsGet("dv_worker2") || DEFAULT_WORKER;
   $("key").value = saved;
-  loadSaved().then(function(){ start(); refreshSaved(); });
+  loadSaved().then(start);
 })();
 </script>
 </body>
